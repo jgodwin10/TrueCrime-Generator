@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+
+  /* Warm paper + ink neutrals */
+  --color-paper: #faf8f4;
+  --color-ink: #1c1a17;
+  --color-muted: #6b665e;
+  --color-line: #e8e3da;
+
+  /* Forest green brand */
+  --color-brand-50: #eef7f3;
+  --color-brand-100: #d5ece2;
+  --color-brand-200: #a9d8c4;
+  --color-brand-500: #2a8467;
+  --color-brand-600: #1c6d54;
+  --color-brand-700: #14594a;
+  --color-brand-800: #0f4539;
+  --color-brand-900: #0b3329;
+
+  /* Terracotta accent */
+  --color-accent-50: #fdf3ee;
+  --color-accent-100: #f9e0d3;
+  --color-accent-500: #d9572b;
+  --color-accent-600: #bf4520;
+
+  --shadow-soft: 0 1px 2px rgb(28 26 23 / 0.04), 0 4px 16px -4px rgb(28 26 23 / 0.08);
+  --shadow-lift: 0 2px 4px rgb(28 26 23 / 0.04), 0 16px 40px -12px rgb(28 26 23 / 0.18);
+
+  --animate-fade-up: fade-up 0.5s ease-out both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-paper font-sans text-ink antialiased;
+    font-feature-settings: "ss01";
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight text-ink;
+    font-optical-sizing: auto;
+  }
+
+  ::selection {
+    @apply bg-brand-100 text-brand-900;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8;
+  }
+
+  .card {
+    @apply rounded-2xl border border-line bg-white shadow-soft;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-700 text-white shadow-soft hover:bg-brand-800 active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply btn border border-line bg-white text-ink hover:border-ink/25 hover:bg-paper;
+  }
+
+  .btn-ghost {
+    @apply btn text-muted hover:bg-ink/5 hover:text-ink;
+  }
+
+  /* After the variants so its padding wins */
+  .btn-lg {
+    @apply px-7 py-3.5 text-base;
+  }
+
+  .label {
+    @apply mb-1.5 block text-sm font-semibold text-ink;
+  }
+
+  .hint {
+    @apply mt-1.5 text-xs text-muted;
+  }
+
+  .input {
+    @apply block w-full rounded-xl border border-line bg-white px-4 py-3 text-base text-ink shadow-[inset_0_1px_2px_rgb(28_26_23/0.04)] transition placeholder:text-muted/60 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 focus:outline-none sm:text-sm;
+  }
+
+  .eyebrow {
+    @apply text-xs font-semibold tracking-[0.16em] text-accent-600 uppercase;
+  }
+
+  .page-title {
+    @apply text-3xl font-semibold sm:text-4xl;
+  }
+}
+
+/* Book text in the web reader: mirrors the EPUB stylesheet */
+@layer components {
+  .book-prose {
+    @apply font-serif text-[1.075rem] leading-[1.75] text-ink sm:text-lg;
+  }
+
+  .book-prose p {
+    @apply mb-5;
+  }
+
+  .book-prose h2 {
+    @apply mt-10 mb-3 text-xl font-semibold sm:text-2xl;
+  }
+
+  .book-prose ul,
+  .book-prose ol {
+    @apply mb-5 space-y-1.5 pl-6;
+  }
+
+  .book-prose ul {
+    @apply list-disc;
+  }
+
+  .book-prose ol {
+    @apply list-decimal;
+  }
+
+  .book-prose figure {
+    @apply my-8;
+  }
+
+  .book-prose figure img {
+    @apply mx-auto h-auto max-w-full rounded-xl;
+  }
+}
+
+/* Toasts in the same visual language */
+:root {
+  --toastify-font-family: var(--font-sans);
+  --toastify-color-success: var(--color-brand-600);
+  --toastify-color-error: var(--color-accent-600);
+  --toastify-color-progress-success: var(--color-brand-500);
+  --toastify-color-progress-error: var(--color-accent-500);
+}
+
+.Toastify__toast {
+  border-radius: 14px;
+  border: 1px solid var(--color-line);
+  box-shadow: var(--shadow-lift);
+  font-size: 0.875rem;
+}

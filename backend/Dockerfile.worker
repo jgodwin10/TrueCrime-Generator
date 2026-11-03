@@ -1,0 +1,60 @@
+# Multi-stage build for document worker
+FROM node:24-alpine AS builder
+
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml* .npmrc ./
+
+COPY pnpm-workspace.yaml ./
+
+RUN npm install -g pnpm@9.15.0 && \
+    pnpm config set store-dir /root/.pnpm-store && \
+    echo "=== pnpm version ===" && pnpm --version && \
+    echo "=== pnpm config ===" && pnpm config list && \
+    echo "=== .npmrc ===" && cat .npmrc && \
+    echo "=== workspace yaml ===" && cat pnpm-workspace.yaml && \
+    pnpm install --frozen-lockfile 
+
+COPY . .
+
+# ✅ IMPORTANT: Explicitly copy fonts (if not already included)
+COPY assets/fonts ./assets/fonts
+
+RUN pnpm run build
+
+# Production stage for worker
+FROM node:24-alpine AS production
+
+RUN apk add --no-cache dumb-init ghostscript
+
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nestjs -u 1001
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml* .npmrc ./
+
+COPY pnpm-workspace.yaml ./
+
+RUN npm install -g pnpm@9.15.0 && \
+    pnpm config set store-dir /root/.pnpm-store && \
+    echo "=== pnpm version ===" && pnpm --version && \
+    echo "=== pnpm config ===" && pnpm config list && \
+    echo "=== .npmrc ===" && cat .npmrc && \
+    echo "=== workspace yaml ===" && cat pnpm-workspace.yaml && \
+    pnpm install --prod --frozen-lockfile && \
+    pnpm store prune
+
+COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
+
+# ✅ CRITICAL: Copy assets folder (fonts) to production stage
+COPY --from=builder --chown=nestjs:nodejs /app/assets ./assets
+
+USER nestjs
+
+ENTRYPOINT ["dumb-init", "--"]
+
+# Worker needs more memory for document processing
+CMD ["node", "--max-old-space-size=4096", "--expose-gc", "dist/workers/document-worker.js"]

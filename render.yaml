@@ -1,0 +1,146 @@
+# Render Blueprint — backend (API + document worker + Redis). The database is
+# Supabase Postgres (see DEPLOYMENT.md for which connection string to use).
+# Render Dashboard → New → Blueprint → select this repo. Values marked
+# `sync: false` are asked for during setup and never stored in git.
+#
+# The frontend deploys separately on Vercel (see frontend/vercel.json). To
+# host it on Render instead, uncomment the static site at the bottom.
+#
+# All Render resources must share a region so they can use private
+# connections. Change `region` everywhere if oregon isn't right for you, and
+# pick the one closest to your Supabase project's region.
+
+services:
+  # Redis for the BullMQ job queues and the image cache
+  - type: keyvalue
+    name: biography-redis
+    region: oregon
+    # "free" works, but it has no persistence: queued jobs are lost on restart
+    plan: starter
+    # BullMQ requires keys to never be evicted
+    maxmemoryPolicy: noeviction
+    # Private network only
+    ipAllowList: []
+
+  # NestJS API (also runs the content-generation queue)
+  - type: web
+    name: biography-api
+    runtime: node
+    region: oregon
+    plan: starter
+    rootDir: backend
+    buildCommand: npx --yes pnpm@9.15.9 install --frozen-lockfile && npx --yes pnpm@9.15.9 run build
+    startCommand: npm run start:web
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      # Keep the heap below the plan's RAM (starter = 512 MB). Raise it when
+      # you upgrade, e.g. 1536 on a 2 GB "standard" instance.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=400
+      # EPUB/PDF files are built by the biography-worker service below. Remove
+      # this to build them inside the API instead (single-service deploy).
+      - key: DOCUMENT_WORKER
+        value: external
+      # Supabase → Connect → "Session pooler" connection string (port 5432),
+      # with your database password filled in. Render has no IPv6, so the
+      # "Direct connection" host won't work. SSL is turned on automatically.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: biography-redis
+          property: connectionString
+      # Creates the tables on the first deploy to an empty Supabase database.
+      # Set it to "false" once the first deploy has succeeded. Row level
+      # security is switched on for every table automatically (Supabase only).
+      - key: DB_SYNCHRONIZE
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      # Comma-separated allowed frontends; wildcards allowed, e.g.
+      # https://your-app.vercel.app,https://*.vercel.app — leave empty to allow any
+      - key: CORS_ORIGINS
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      # Optional extra Gemini keys, comma-separated, rotated on rate limits
+      - key: GEMINI_API_KEYS
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+  # Background worker that builds the EPUB and PDF files
+  - type: worker
+    name: biography-worker
+    runtime: node
+    region: oregon
+    plan: starter
+    rootDir: backend
+    buildCommand: npx --yes pnpm@9.15.9 install --frozen-lockfile && npx --yes pnpm@9.15.9 run build
+    startCommand: npm run start:worker
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=400
+      # Supabase → Connect → "Session pooler" connection string (port 5432),
+      # with your database password filled in. Render has no IPv6, so the
+      # "Direct connection" host won't work. SSL is turned on automatically.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: biography-redis
+          property: connectionString
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+  # ── Optional: use Render Postgres instead of Supabase ────────────────
+  # Add this top-level block, then replace both DATABASE_URL entries with
+  #   fromDatabase: { name: biography-db, property: connectionString }
+  # databases:
+  #   - name: biography-db
+  #     databaseName: biography
+  #     user: biography
+  #     region: oregon
+  #     plan: basic-256mb
+
+  # ── Optional: host the frontend on Render instead of Vercel ──────────
+  # - type: web
+  #   name: biography-web
+  #   runtime: static
+  #   rootDir: frontend
+  #   buildCommand: npm ci && npm run build
+  #   staticPublishPath: dist
+  #   routes:
+  #     - type: rewrite
+  #       source: /*
+  #       destination: /index.html
+  #   envVars:
+  #     - key: NODE_VERSION
+  #       value: "22"
+  #     - key: VITE_API_URL
+  #       fromService:
+  #         type: web
+  #         name: biography-api
+  #         property: host
