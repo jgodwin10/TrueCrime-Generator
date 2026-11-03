@@ -17,15 +17,16 @@ export class ContentController {
   @Post('generate-true-crime/:projectId')
   @ApiOperation({
     summary: 'Generate a complete English true crime book',
-    description: `Generates a narrative true crime book following this 5-step process:
+    description: `Generates a narrative true crime book following this 6-step process:
 
-Step 1: Create a chronological 12-chapter outline of the case
-Step 2: Write the Introduction around one documented, non-violent moment
-Step 3: Write each case chapter in order, as narrative prose
-Step 4: Write the Conclusion on where the case stands, with a case timeline
-Step 5: Add copyright, about-the-book and table of contents
+Step 1: Research the case with live web search; stop if there are too few reliable sources
+Step 2: Create a chronological 12-chapter outline from that research
+Step 3: Write the Introduction around one documented, non-violent moment
+Step 4: Write each case chapter in order, as narrative prose, checked against the sources for copied text
+Step 5: Write the Conclusion on where the case stands, with a case timeline and source list
+Step 6: Add copyright, about-the-book and table of contents
 
-Prompts forbid invented quotes, dialogue and private thoughts, copied storytelling, naming anyone as guilty without a conviction, and graphic detail. Author notes override the model's memory of the facts, but not those rules.`,
+Prompts forbid invented quotes, dialogue and private thoughts, copied storytelling, naming anyone as guilty without a conviction, and graphic detail. Author notes add direction and facts, but the research and those rules win.`,
   })
   @ApiResponse({
     status: 201,

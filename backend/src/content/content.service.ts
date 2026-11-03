@@ -1,7 +1,7 @@
 // src/content/content.service.ts
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Project, ProjectStatus } from 'src/DB/entities/project.entity';
 import { Job, JobType, JobStatus } from 'src/DB/entities/job.entity';
@@ -12,6 +12,26 @@ import { Chapter } from 'src/DB/entities/chapter.entity';
 import { buildCopyrightPage } from './copyright';
 import { buildTableOfContents } from './table-of-contents';
 import { resolveFontSettings } from './book-fonts';
+import {
+  bookStoppedError,
+  CaseResearch,
+  formatSourcesSection,
+} from './case-research';
+import {
+  MAX_REMAINING_COPIED_SHARE,
+  OriginalityIndex,
+} from './originality';
+
+// Printed at the end of the About page of every book
+const READER_NOTE = `A Note for Readers
+
+This book is about real events and real people. It covers serious crime and what it did to victims, families and communities, some of whom are still living with it. It is written to describe those events without graphic detail and with respect for the people affected.`;
+
+const MAX_ORIGINALITY_REWRITES = 2;
+// A rewrite much shorter than the original lost content, so it isn't kept
+const MIN_REWRITE_LENGTH_SHARE = 0.7;
+const OTHER_BOOKS_COMPARED = 5;
+const MAX_TITLES_TO_AVOID = 60;
 
 @Injectable()
 export class ContentService {
@@ -89,11 +109,12 @@ export class ContentService {
       jobId: job.id,
       projectId,
       steps: [
-        'Step 1: Generating detailed book outline',
-        'Step 2: Writing introduction',
-        'Step 3: Writing the case chapters',
-        'Step 4: Writing the conclusion and case timeline',
-        'Step 5: Generating front matter and table of contents',
+        'Step 1: Researching the case on the live web',
+        'Step 2: Generating detailed book outline',
+        'Step 3: Writing introduction',
+        'Step 4: Writing the case chapters, each checked for originality',
+        'Step 5: Writing the conclusion, case timeline and sources',
+        'Step 6: Generating front matter and table of contents',
       ],
     };
   }
@@ -128,6 +149,32 @@ export class ContentService {
       const bookStyle = describeStyleProfile(buildStyleProfile(projectId));
       this.logger.log(`Book "${generateDto.title}" style: ${bookStyle}`);
 
+      // STEP 0: Research first: nothing is written without sources
+      job.progress = 2;
+      await this.jobRepository.save(job);
+
+      const research = await this.geminiService.researchCase(brief);
+      brief.dossier = research.dossier;
+
+      const originality = new OriginalityIndex();
+      research.pages.forEach((page) => originality.add(page));
+      brief.avoidTitles = await this.compareWithOtherBooks(
+        projectId,
+        generateDto.subject,
+        originality,
+      );
+
+      // Named here because every chapter below goes through it
+      const makeOriginal = (text: string, label: string) =>
+        this.ensureOriginal(
+          text,
+          label,
+          originality,
+          generateDto.title,
+          generateDto.subtitle || '',
+          brief,
+        );
+
       // STEP 1: Generate detailed outline (5% progress)
       this.logger.log(
         `Step 1: Generating book outline for ${generateDto.title} with ${numberOfChapters} chapters...`,
@@ -159,6 +206,7 @@ export class ContentService {
       job.result = {
         outline,
         bookStyle, // Store style in job result for reference
+        research: this.researchRecord(research),
       };
       await this.jobRepository.save(job);
 
@@ -195,7 +243,12 @@ export class ContentService {
         brief,
       );
 
-      await this.saveChapter(projectId, 'About Book', 2, aboutBook);
+      await this.saveChapter(
+        projectId,
+        'About Book',
+        2,
+        `${await makeOriginal(aboutBook, 'About Book')}\n\n${READER_NOTE}`,
+      );
 
       // ── Cooldown after about book generation ───────────────────
       await this.cooldown();
@@ -233,7 +286,7 @@ export class ContentService {
         projectId,
         outline.chapters[0].chapterTitle,
         4,
-        introduction,
+        await makeOriginal(introduction, 'Introduction'),
       );
 
       job.progress = 25;
@@ -271,7 +324,7 @@ export class ContentService {
           projectId,
           chapterOutline.chapterTitle,
           4 + i + 1,
-          content,
+          await makeOriginal(content, chapterOutline.chapterTitle),
         );
 
         job.progress = 25 + Math.round((i + 1) * progressPerChapter);
@@ -303,7 +356,14 @@ export class ContentService {
         projectId,
         conclusionChapter.chapterTitle,
         4 + mainChapters.length + 1,
-        conclusion,
+        // The source list follows the check: its titles aren't the book's prose
+        `${await makeOriginal(conclusion, 'Conclusion')}\n\n${formatSourcesSection(
+          research.sources,
+          new Date().toLocaleDateString('en-US', {
+            month: 'long',
+            year: 'numeric',
+          }),
+        )}`,
       );
 
       job.progress = 95;
@@ -393,6 +453,98 @@ export class ContentService {
         error: error.message,
       });
     }
+  }
+
+  /** Kept with the job, so anyone fact-checking the book can see what it used */
+  private researchRecord(research: CaseResearch) {
+    return {
+      dossier: research.dossier,
+      sources: research.sources,
+      pagesRead: research.pages.length,
+    };
+  }
+
+  /**
+   * Adds other books on this case to the originality check, so two books on
+   * one case can't converge, and returns their chapter titles to avoid
+   */
+  private async compareWithOtherBooks(
+    projectId: string,
+    subject: string,
+    originality: OriginalityIndex,
+  ): Promise<string[]> {
+    const others = await this.projectRepository
+      .createQueryBuilder('project')
+      .select('project.id', 'id')
+      .where('LOWER(TRIM(project.subject)) = LOWER(TRIM(:subject))', { subject })
+      .andWhere('project.id != :projectId', { projectId })
+      .orderBy('project.createdAt', 'DESC')
+      .limit(OTHER_BOOKS_COMPARED)
+      .getRawMany<{ id: string }>();
+    if (!others.length) return [];
+
+    const chapters = await this.chapterRepository.find({
+      where: { projectId: In(others.map((other) => other.id)) },
+    });
+    const titles = new Set<string>();
+    for (const chapter of chapters) {
+      // Front matter is boilerplate that every book shares on purpose
+      if (['Copyright', 'About Book', 'Table of Contents'].includes(chapter.title)) {
+        continue;
+      }
+      originality.add(chapter.content);
+      titles.add(chapter.title);
+    }
+    return [...titles].slice(0, MAX_TITLES_TO_AVOID);
+  }
+
+  /**
+   * Rewrites anything that matches the sources, another book or an earlier
+   * chapter word for word. A chapter that can't be fixed stops the book.
+   */
+  private async ensureOriginal(
+    text: string,
+    label: string,
+    originality: OriginalityIndex,
+    title: string,
+    subtitle: string,
+    brief: CaseBrief,
+  ): Promise<string> {
+    let current = text;
+
+    for (let attempt = 1; attempt <= MAX_ORIGINALITY_REWRITES; attempt++) {
+      const { passages } = originality.check(current);
+      if (!passages.length) break;
+
+      this.logger.warn(
+        `${label}: ${passages.length} passage(s) match existing text; rewriting (${attempt}/${MAX_ORIGINALITY_REWRITES})`,
+      );
+      const rewritten = await this.geminiService.rewriteCopiedPassages(
+        current,
+        passages,
+        title,
+        subtitle,
+        brief,
+      );
+      if (rewritten.length >= current.length * MIN_REWRITE_LENGTH_SHARE) {
+        current = rewritten;
+      }
+    }
+
+    const { passages, copiedShare } = originality.check(current);
+    if (copiedShare > MAX_REMAINING_COPIED_SHARE) {
+      throw bookStoppedError(
+        `"${label}" still matched existing text after being rewritten, so this book was stopped. Please try creating it again.`,
+      );
+    }
+    if (passages.length) {
+      this.logger.warn(
+        `${label}: ${passages.length} short matching passage(s) remain, under the limit`,
+      );
+    }
+
+    originality.add(current);
+    return current;
   }
 
   // FIXED: Ensure projectId is always set

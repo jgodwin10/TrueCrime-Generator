@@ -6,6 +6,7 @@ import { Project } from 'src/DB/entities/project.entity';
 import { JobStatus } from 'src/DB/entities/job.entity';
 import { ProjectService } from 'src/project/project.service';
 import { DocumentService } from 'src/documents/document.service';
+import { BOOK_STOPPED_PREFIX } from 'src/content/case-research';
 
 // One English EPUB + one English PDF per book
 const EXPECTED_DOCUMENTS = 2;
@@ -55,6 +56,10 @@ export class BookGeneratorService {
 
     const isComplete = completedDocuments === EXPECTED_DOCUMENTS;
     const hasFailed = failedJobs.length > 0;
+    // Only messages written for the book's owner; other errors stay in the logs
+    const stoppedError = failedJobs.find((j) =>
+      j.error?.startsWith(BOOK_STOPPED_PREFIX),
+    )?.error;
 
     return {
       projectId: project.id,
@@ -65,6 +70,7 @@ export class BookGeneratorService {
       progress: overallProgress,
       isComplete,
       hasFailed,
+      failureReason: stoppedError?.slice(BOOK_STOPPED_PREFIX.length),
       stats: {
         chapters: stats.stats.totalChapters,
         images: stats.stats.totalImages,

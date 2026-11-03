@@ -42,7 +42,7 @@ export class CreateBookDto {
   @ApiProperty({
     example: 'Focus on the ransom investigation and the trial evidence.',
     description:
-      'Optional facts or direction. They override the writer\'s memory of the facts, but cannot make anyone guilty without a conviction.',
+      'Optional facts or direction. Research wins where they conflict, and they cannot make anyone guilty without a conviction.',
     required: false,
   })
   @IsString()

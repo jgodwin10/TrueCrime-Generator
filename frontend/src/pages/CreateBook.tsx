@@ -246,9 +246,9 @@ const CreateBook = () => {
         <p className="eyebrow">New book</p>
         <h1 className="page-title mt-2">Create a true crime book</h1>
         <p className="mt-3 text-muted">
-          Tell us which case to write about. We'll write the chapters from what
-          the AI knows of the public record and your notes, then build your
-          Google Play files. Fact-check it before you publish.
+          Tell us which case to write about. We'll research it on the live web,
+          write the chapters from those sources and build your Google Play
+          files. Check the facts against the source list before you publish.
         </p>
       </header>
 
@@ -260,7 +260,7 @@ const CreateBook = () => {
           <Section
             step={1}
             title="Which case does this book cover?"
-            description="A real, documented case. Older and well-reported cases give the most reliable books."
+            description="A real, documented case. If we can't find enough reliable sources, the book won't be written."
           >
             <div className="space-y-5">
               <div>
@@ -296,9 +296,9 @@ const CreateBook = () => {
                 />
                 <div className="hint flex justify-between gap-4">
                   <span>
-                    Used as facts, so only add what the public record supports.
-                    Notes can't make anyone guilty: without a conviction, a person
-                    is only described as suspected or accused.
+                    Use these for direction and extra facts. Where they conflict with
+                    the research, the research wins, and without a conviction a
+                    person is only described as suspected or accused.
                   </span>
                   <span className="shrink-0 tabular-nums">
                     {formData.notes.length}/{MAX_NOTES}
@@ -504,8 +504,9 @@ const CreateBook = () => {
             </p>
             <ul className="mt-3 space-y-1.5 text-brand-800">
               <li>{formData.numberOfChapters} chapters, from the first report to where the case stands</li>
-              <li>A case timeline at the end</li>
-              <li>No invented quotes or scenes, and no one called guilty without a conviction</li>
+              <li>A case timeline and a list of the sources used</li>
+              <li>Written from live research and checked for copied text</li>
+              <li>Written with respect for victims, with no gore or invented scenes</li>
               <li>2 Google Play files: an English EPUB &amp; PDF</li>
               <li>
                 Your account's copyright page, contents format and fonts (

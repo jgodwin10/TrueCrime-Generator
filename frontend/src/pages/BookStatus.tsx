@@ -29,7 +29,7 @@ const PHASES: Record<string, number> = {
 
 const STEPS = [
   { phase: 0, title: "Queued", body: "Your book is waiting for a free writer." },
-  { phase: 1, title: "Writing the book", body: "Outline, 12 chapters and front matter." },
+  { phase: 1, title: "Researching and writing", body: "Live web research, then the outline and chapters, each checked for originality." },
   { phase: 2, title: "Building ebooks", body: "The English EPUB and PDF files." },
   { phase: 3, title: "Ready to publish", body: "2 files for Google Play Books." },
 ];
@@ -218,8 +218,8 @@ const BookStatus = () => {
           <div>
             <p className="font-semibold">Generation failed</p>
             <p className="mt-0.5 text-sm">
-              Something went wrong while making this book. Please try creating
-              it again.
+              {status.failureReason ||
+                "Something went wrong while making this book. Please try creating it again."}
             </p>
           </div>
         </div>

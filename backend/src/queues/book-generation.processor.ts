@@ -622,7 +622,7 @@ export class BookGenerationProcessor extends WorkerHost {
             resolve();
           } else if (status.status === JobStatus.FAILED) {
             clearInterval(interval);
-            reject(new Error(`Job ${jobId} failed`));
+            reject(new Error(status.error || `Job ${jobId} failed`));
           }
         } catch (error) {
           clearInterval(interval);

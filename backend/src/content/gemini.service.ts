@@ -8,6 +8,20 @@ import {
   ChapterOutline,
 } from './dto/generate-true-crime.dto';
 import {
+  bookStoppedError,
+  buildResearchPrompt,
+  CaseResearch,
+  CaseSource,
+  caseNotFound,
+  domainOf,
+  isUsableSource,
+  MIN_SOURCE_DOMAINS,
+  MIN_SOURCES,
+  readSourcePage,
+  RESEARCH_PASSES,
+  uniqueSources,
+} from './case-research';
+import {
   buildStyleProfile,
   formatForChapter,
   StyleProfile,
@@ -35,6 +49,9 @@ interface GenerationOptions {
   presencePenalty?: number;
   maxOutputTokens?: number;
   responseMimeType?: 'application/json' | 'text/plain';
+  // Search the live web, and report what was cited
+  webSearch?: boolean;
+  onSources?: (sources: CaseSource[]) => void;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -49,6 +66,10 @@ export interface CaseBrief {
   // Unique per book (the project id): picks this book's writing style, so
   // books with the same title still read differently
   seed?: string;
+  // The facts every prompt writes from (see case-research.ts)
+  dossier?: string;
+  // Chapter titles of other books on this case, which this one must not reuse
+  avoidTitles?: string[];
 }
 
 // Keeps very long notes from crowding out the actual instructions
@@ -67,17 +88,20 @@ const PLAIN_LANGUAGE_RULES = `PLAIN LANGUAGE REQUIREMENT:
 // prompt carries these rules.
 // ═══════════════════════════════════════════════════════════════
 const TRUE_CRIME_FACT_RULES = `FACTUAL ACCURACY — THIS BOOK IS ABOUT A REAL CASE AND REAL PEOPLE:
-- Only state facts you are confident are part of the documented public record: court records and rulings, official statements, sworn testimony, and established news reporting.
+- The RESEARCH DOSSIER in this prompt is your source of facts. It comes from live web research. State a fact about this case or anyone in it only if it is in the dossier or the author notes. Do not add case facts from memory, however sure you feel: your memory of a real case can be wrong, and the people in it pay for that.
+- General background that isn't about the case itself (how a court procedure works, what an era or place was like) may come from general knowledge, if it is uncontroversial.
+- The dossier is notes, not prose. Never copy its sentences into the book: choose what matters and tell it in fresh words.
+- Anything the dossier marks as "single source" must be attributed in the text ("one report said"), or left out. Follow its DISPUTES AND CORRECTIONS section, and never repeat a claim it says was disproven, except to correct it.
 - Never invent anything: no quotes, dialogue, scenes, people, evidence, documents, file numbers, dates, times, numbers or sources.
 - Never put words in quotation marks and attribute them to anyone unless the words are famous and exact. Otherwise paraphrase and attribute ("a witness testified that...", "police later said...").
 - Never narrate what anyone thought or felt, especially the victim's last moments or an offender's state of mind. Nobody can report them. You may describe what a person said about their own feelings in public, and say so.
 - Do not recreate events minute by minute unless the record really does establish them. Where the sequence is unknown, say so.
 - When a detail is uncertain or accounts disagree, say so plainly ("accounts differ", "according to the prosecution") or leave it out. Never fill a gap with something plausible.
 - Give dates when you are confident. Use exact times and days only when you are certain. Do not invent figures; use rounded, hedged figures only when you are confident of the size.
-- Your knowledge has a cutoff. Do not claim to know where the case stands today; describe the latest events you know "as of this writing", and do not predict outcomes.
+- For where the case stands today, use the dossier's latest developments and write "as of this writing". Do not predict outcomes.
 - Context is welcome — the era, the place, how police and courts worked — but present it as context, not as facts about the people in the case.
-- If AUTHOR NOTES are provided, use them, and let them override your memory on dates, places and events. They never override the FAIRNESS rules: if a note says someone is guilty and that person was not convicted, report it only as an allegation or leave it out.
-- If you do not clearly recognize this case, do not invent one. Write only what the author notes establish, name nobody who is not in the notes, and widen the lens to general context, saying plainly that the record available is limited.`;
+- If AUTHOR NOTES are provided, use them for direction and for extra facts. Where they conflict with the dossier, follow the dossier. They never override the FAIRNESS rules: if a note says someone is guilty and that person was not convicted, report it only as an allegation or leave it out.
+- Where the dossier says "Not found" or is thin, say plainly that less is known, and widen the lens to general context. Never fill the gap.`;
 
 // ═══════════════════════════════════════════════════════════════
 // FAIRNESS — accusing a real person of a crime is the book's biggest
@@ -98,7 +122,10 @@ const TRUE_CRIME_FAIRNESS_RULES = `FAIRNESS AND LEGAL CARE — NON-NEGOTIABLE:
 // DIGNITY AND SAFETY — the people harmed are not material
 // ═══════════════════════════════════════════════════════════════
 const TRUE_CRIME_DIGNITY_RULES = `DIGNITY AND SAFETY — NON-NEGOTIABLE:
-- The people harmed are people first. Show who they were, as far as the record and their families' public statements allow. Never blame them, and do not judge their choices, habits or relationships unless that was a material issue in court.
+- The people harmed are people first, and this is their story more than the offender's. Introduce them before any offender, as people with lives and not as victims of an event. Show who they were, as far as the dossier and their families' public statements allow. Never blame them, and do not judge their choices, habits or relationships unless that was a material issue in court.
+- Write every page as if the family of the person harmed will read it, because they might. They should find it accurate and fair, even where it is painful.
+- Honor any public request in the dossier from a family or survivor about how they or the case should be discussed.
+- Give offenders only the space the facts need. Do not open a chapter on them, build a chapter's drama around them, or give them the last word. Refer to them by name rather than by any nickname, after noting a widely used nickname once if readers need it to identify the case.
 - Violence: state what happened once, plainly, as the official finding. No gore, no injury descriptions beyond what the story strictly needs, no autopsy detail, no lingering on suffering, and never use a death for suspense.
 - Sexual crimes: name the nature of the crime in general terms only (for example, "was charged with sexual assault"). Never describe the acts.
 - Children: never include any sexual detail or anything sexualized about a person under 18, under any circumstances. If the case involves such a crime against a child, say only what the charge or conviction was.
@@ -281,6 +308,7 @@ export class GeminiService {
   private readonly logger = new Logger(GeminiService.name);
   private apiProviders: APIProvider[] = [];
   private currentProviderIndex: number = 0;
+  private openaiResearchModel = 'gpt-4.1-mini';
   private readonly MAX_RETRIES = 5;
   private readonly INITIAL_RETRY_DELAY = 6000;
 
@@ -345,6 +373,10 @@ export class GeminiService {
         lastErrorType: null,
       });
     });
+
+    // Cheap writing models such as gpt-4.1-nano can't search the web
+    this.openaiResearchModel =
+      this.configService.get<string>('OPENAI_RESEARCH_MODEL') || 'gpt-4.1-mini';
 
     const openaiKey = this.configService.get<string>('OPENAI_API_KEY');
 
@@ -582,9 +614,18 @@ export class GeminiService {
         : notes;
 
     return `
-AUTHOR NOTES (supplied by the author — use them where they fit, and let them override your memory on dates, places and events. They never override the FAIRNESS rules):
+AUTHOR NOTES (supplied by the author — use them for direction and extra facts. The dossier wins where they conflict, and they never override the FAIRNESS rules):
 """
 ${trimmed}
+"""`;
+  }
+
+  private buildDossierBlock(brief?: CaseBrief): string {
+    if (!brief?.dossier) return '';
+    return `
+RESEARCH DOSSIER (facts from live web research — your source for everything about this case):
+"""
+${brief.dossier}
 """`;
   }
 
@@ -613,6 +654,7 @@ BOOK CONTEXT (this book's own angle — keep it consistent across every chapter)
 - The question this book keeps asking: ${context.drivingQuestion} Keep it in view; each chapter should add something to the answer, without forcing it into every paragraph.
 - Lens: the book looks at the case mainly through ${context.lens}. Give it extra weight where the record supports it, without leaving out what matters most.
 - Pacing: ${context.pacing}
+${this.buildDossierBlock(brief)}
 ${this.buildAuthorNotesBlock(brief)}`;
   }
 
@@ -670,6 +712,8 @@ ${PLAIN_LANGUAGE_RULES}`;
             responseMimeType: options.responseMimeType,
           },
           systemInstruction: systemPrompt,
+          // Newer than this SDK's types, which only know the retired retrieval tool
+          ...(options.webSearch ? { tools: [{ googleSearch: {} } as any] } : {}),
         });
         // Pass abort signal to the request
         const result = await model.generateContent({
@@ -682,9 +726,50 @@ ${PLAIN_LANGUAGE_RULES}`;
         provider.consecutiveErrors = 0;
 
         const text = response.text();
-        if (this.looksLikeRefusal(text)) {
+        // Gemini can finish normally with no text at all
+        if (!text.trim() || this.looksLikeRefusal(text)) {
           throw this.contentBlockedError('the model declined');
         }
+        options.onSources?.(
+          (response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [])
+            .filter((chunk) => chunk.web?.uri)
+            .map((chunk) => ({
+              title: chunk.web?.title || '',
+              url: chunk.web?.uri as string,
+              domain: '',
+            })),
+        );
+        return text;
+      } else if (options.webSearch) {
+        const response = await (provider.client as OpenAI).responses.create(
+          {
+            model: this.openaiResearchModel,
+            instructions: systemPrompt,
+            input: prompt,
+            tools: [{ type: 'web_search' }],
+          },
+          { signal: controller.signal },
+        );
+        clearTimeout(timeoutId);
+        provider.consecutiveErrors = 0;
+
+        const text = response.output_text || '';
+        if (!text.trim() || this.looksLikeRefusal(text)) {
+          throw this.contentBlockedError('the model declined');
+        }
+        const sources: CaseSource[] = [];
+        for (const item of response.output) {
+          if (item.type !== 'message') continue;
+          for (const part of item.content) {
+            if (part.type !== 'output_text') continue;
+            for (const note of part.annotations) {
+              if (note.type === 'url_citation') {
+                sources.push({ title: note.title, url: note.url, domain: '' });
+              }
+            }
+          }
+        }
+        options.onSources?.(sources);
         return text;
       } else {
         const completion = await (
@@ -929,6 +1014,125 @@ ${PLAIN_LANGUAGE_RULES}`;
       presencePenalty: 0,
       maxOutputTokens: 16384,
       responseMimeType: 'application/json',
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // RESEARCH — live web search, one pass per topic
+  // ═══════════════════════════════════════════════════════════════
+  async researchCase(brief: CaseBrief): Promise<CaseResearch> {
+    const today = new Date().toISOString().slice(0, 10);
+    const systemPrompt =
+      'You are a careful legal and news researcher. You report only what your searches find, in your own words, and you never guess.';
+    const sections: string[] = [];
+    const cited: CaseSource[] = [];
+
+    for (const pass of RESEARCH_PASSES) {
+      this.logger.log(`Researching "${brief.subject}": ${pass.id}`);
+      let passSources: CaseSource[] = [];
+      let text = '';
+
+      try {
+        text = await this.generateWithProviderRotation(
+          buildResearchPrompt(pass, brief.subject, today, brief.notes),
+          systemPrompt,
+          {
+            temperature: 0.2,
+            maxOutputTokens: 4096,
+            webSearch: true,
+            onSources: (sources) => (passSources = sources),
+          },
+        );
+      } catch (error: any) {
+        this.logger.error(`Research pass ${pass.id} failed: ${error?.message}`);
+        if (pass.required) {
+          throw bookStoppedError(
+            'Web research is not available right now, so this book was not written. Check that billing is enabled for web search on your Gemini or OpenAI account, then try again.',
+          );
+        }
+        continue;
+      }
+
+      if (caseNotFound(text)) {
+        if (pass.required) {
+          throw bookStoppedError(
+            `No reliable public sources could be found for "${brief.subject}", so this book was not written. Check the case name, or add the place and year.`,
+          );
+        }
+        continue;
+      }
+
+      // Without citations this is the model's memory, not research
+      if (!passSources.length) {
+        this.logger.warn(`Research pass ${pass.id} cited nothing; discarded`);
+        continue;
+      }
+
+      sections.push(`${pass.heading}\n${text.trim()}`);
+      cited.push(...passSources);
+    }
+
+    // Citations are often temporary redirects: follow them to the real page
+    const candidates = uniqueSources(cited);
+    const sources: CaseSource[] = [];
+    const pages: string[] = [];
+    for (let i = 0; i < candidates.length; i += 5) {
+      const batch = candidates.slice(i, i + 5);
+      const results = await Promise.all(
+        batch.map((source) => readSourcePage(source.url)),
+      );
+      results.forEach((page, index) => {
+        if (!page || !isUsableSource(page.url)) return;
+        sources.push({
+          ...batch[index],
+          url: page.url,
+          domain: domainOf(page.url),
+        });
+        if (page.text) pages.push(page.text);
+      });
+    }
+    const usable = uniqueSources(sources);
+
+    const hasOverview = sections.some((s) =>
+      s.startsWith(RESEARCH_PASSES[0].heading),
+    );
+    const domains = new Set(usable.map((s) => s.domain));
+    this.logger.log(
+      `Research on "${brief.subject}": ${sections.length}/${RESEARCH_PASSES.length} passes, ${usable.length} sources from ${domains.size} sites, ${pages.length} pages read`,
+    );
+    if (
+      !hasOverview ||
+      usable.length < MIN_SOURCES ||
+      domains.size < MIN_SOURCE_DOMAINS
+    ) {
+      throw bookStoppedError(
+        `Too few reliable public sources were found for "${brief.subject}" (${usable.length} from ${domains.size} sites), so this book was not written. Check the case name, or choose a better documented case.`,
+      );
+    }
+
+    return { dossier: sections.join('\n\n'), sources: usable, pages };
+  }
+
+  /** Rewrites only the passages the originality check flagged */
+  async rewriteCopiedPassages(
+    text: string,
+    passages: string[],
+    title: string,
+    subtitle: string,
+    brief: CaseBrief,
+  ): Promise<string> {
+    const prompt = `The passages below from this true crime chapter match the wording of an existing source word for word. Rewrite each one completely, with new wording and new sentence structure, keeping the facts accurate. Leave the rest of the chapter exactly as it is. Do not shorten the chapter or add new facts.
+
+MATCHING PASSAGES:
+${passages.map((passage, i) => `${i + 1}. ${passage}`).join('\n')}
+
+CHAPTER:
+${text}
+
+Return ONLY the full chapter text. No commentary.`;
+
+    return await this.generateText(prompt, {
+      systemPrompt: this.getSystemPrompt(brief, title, subtitle),
     });
   }
 
@@ -1302,7 +1506,9 @@ ${this.buildMainChapterDepthRules()}
 8. Keep the timeline clear: dates where the record supports them, and explicit time jumps.
 9. Preserve the case, angle and promise from the title/subtitle — every paragraph should serve this story.
 10. Turn note-like passages into finished narrative prose with the section headings from the outline.
-11. VOICE CHECK: It should read like a careful writer telling a true story — not a tabloid, not a police report, not a podcast script. Remove any claim that the writer attended, interviewed, visited or personally investigated anything.
+11. THE FAMILY TEST: Read it as a relative of the person harmed would. Cut anything that treats that person as a plot device, turns their death into suspense, or gives an offender more attention or the better lines. Make sure they appear as a person, not only as a victim.
+12. RESEARCH CHECK: Every fact about the case must be in the RESEARCH DOSSIER or author notes. Remove anything that isn't, and rewrite any sentence copied from the dossier.
+13. VOICE CHECK: It should read like a careful writer telling a true story — not a tabloid, not a police report, not a podcast script. Remove any claim that the writer attended, interviewed, visited or personally investigated anything.
 
 ${this.buildRefinementContextBlock('BOOK CONTEXT TO PRESERVE:', refinementContext)}
 ${mainChapterDepthInstruction}
@@ -1670,7 +1876,8 @@ REQUIREMENTS:
 11. Do not use bare generic chapter titles like "The Crime", "The Investigation", "The Trial" or "The Aftermath". Name the place, document, decision, date or question. Do not reuse chapter titles from any existing book, documentary or podcast about this case.
 12. Plan chapters, sections and subsections only around events you are confident are documented, or that appear in the author notes. Do not plan sections around events you are unsure happened.
 13. No title may state or imply that someone is guilty unless they were convicted. No title may dwell on violence, a body or a victim's suffering, or use a sensational nickname as a hook.
-14. Give at least one early section to the person or people harmed as people, if the record allows it. Do not plan any section around the details of violence, a sexual crime or an offender's methods.
+14. Give an early section to the person or people harmed as people, before any section about an offender, if the dossier allows it. Do not plan any section around the details of violence, a sexual crime or an offender's methods, and do not name a chapter after an offender.
+14a. Plan only from the RESEARCH DOSSIER and author notes. Choose your own selection and order of facts: the dossier's order is not the book's.${brief.avoidTitles?.length ? `\n14b. Other books have already used these chapter titles for this case. Do not reuse them or close variations:\n${brief.avoidTitles.map((t) => `- ${t}`).join('\n')}` : ''}
 15. If the case is open or still in the courts, the last case chapter covers the most recent documented stage "as of this writing".
 16. If the subtitle promises an angle, era or count, honor it clearly across the chapters without padding or duplicate ideas.
 17. Use plain English for all titles, sections, and subsections: common words, direct phrasing, no jargon

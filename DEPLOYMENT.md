@@ -73,7 +73,11 @@ Everything is described in [`render.yaml`](render.yaml):
 3. Fill in the values Render asks for:
    - `DATABASE_URL`: your Supabase Session pooler string (asked for both
      the API and the worker; use the same value)
-   - `GEMINI_API_KEY` (and optionally `GEMINI_API_KEYS`, `OPENAI_API_KEY`)
+   - `GEMINI_API_KEY` (and optionally `GEMINI_API_KEYS`, `OPENAI_API_KEY`).
+     Every book starts with live web research, so Gemini needs billing enabled
+     for Google Search, or OpenAI needs credits and a search-capable
+     `OPENAI_RESEARCH_MODEL` (default `gpt-4.1-mini`). Without either, books
+     stop with a message instead of being written.
    - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
      (asked for both the API and the worker)
    - `CORS_ORIGINS`: leave empty for now

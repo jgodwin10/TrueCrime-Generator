@@ -10,6 +10,8 @@ export interface BookStatus {
   progress: number;
   isComplete: boolean;
   hasFailed: boolean;
+  /** Why the book stopped, when it's something the owner can act on */
+  failureReason?: string;
   stats: {
     chapters: number;
     images: number;

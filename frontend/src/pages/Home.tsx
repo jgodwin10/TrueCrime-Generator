@@ -27,8 +27,8 @@ const FEATURES = [
   },
   {
     icon: CheckCircleIcon,
-    title: "Careful with people and facts",
-    body: "No invented quotes or scenes, no copied storytelling, no gore, and nobody called guilty without a conviction. Always fact-check the finished book before you publish.",
+    title: "Researched and respectful",
+    body: "Written from live web research, with a source list. Checked for copied text. Victims come first: no gore, no invented scenes, and nobody called guilty without a conviction.",
   },
   {
     icon: SmartphoneIcon,
@@ -40,7 +40,7 @@ const FEATURES = [
 const STEPS = [
   { title: "Name the case", body: "Tell us which case the book covers." },
   { title: "Add your angle", body: "A title, subtitle, and any notes or photos you have." },
-  { title: "Let it write", body: "Twelve chapters are written for you." },
+  { title: "Let it write", body: "We research the case, then write twelve original chapters." },
   { title: "Publish", body: "Download the EPUB and PDF, and upload to Google Play." },
 ];
 
