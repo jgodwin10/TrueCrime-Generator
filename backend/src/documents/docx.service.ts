@@ -799,7 +799,7 @@ export class DocxService {
       new Paragraph({
         // text: title.toUpperCase(),
         alignment: AlignmentType.CENTER,
-        spacing: { before: 100, after: 700 },
+        spacing: { before: 100, after: 320 },
         children: [
           new TextRun({
             text: title.toUpperCase(),

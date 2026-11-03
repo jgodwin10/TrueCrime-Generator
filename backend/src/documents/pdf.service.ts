@@ -257,53 +257,61 @@ export class PdfService extends BookFormatterBase {
   ): void {
     doc.addPage();
     const pageWidth = doc.page.width;
+    const textOptions = { width: pageWidth - 100, align: 'center' as const };
 
-    // ✅ FIXED: Directly try to use custom fonts with fallback
-    try {
-      doc.fontSize(30).font('TitleExtraBold');
-    } catch (error) {
-      doc.fontSize(30).font('Helvetica-Bold');
-    }
+    const titleY = 100;
+    const bylineY = 480;
+    const subtitleGap = 16;
+    const bylineGap = 24;
+    const upperTitle = title.toUpperCase();
 
-    doc.text(title.toUpperCase(), 50, 100, {
-      width: pageWidth - 100,
-      align: 'center',
-    });
-
+    let subtitleHeight = 0;
     if (subtitle) {
-      try {
-        doc.fontSize(10).font('BodyRegular');
-      } catch (error) {
-        doc.fontSize(10).font('Helvetica');
-      }
-
-      doc.text(subtitle, 50, 250, {
-        width: pageWidth - 100,
-        align: 'center',
-      });
+      this.setTitlePageFont(doc, 'BodyRegular', 'Helvetica', 10);
+      subtitleHeight = subtitleGap + doc.heightOfString(subtitle, textOptions);
     }
 
+    // Long titles step down in size so they and the subtitle stay above the
+    // byline
+    let titleSize = 30;
+    this.setTitlePageFont(doc, 'TitleExtraBold', 'Helvetica-Bold', titleSize);
+    while (
+      titleSize > 18 &&
+      titleY + doc.heightOfString(upperTitle, textOptions) + subtitleHeight >
+        bylineY - bylineGap
+    ) {
+      titleSize -= 2;
+      this.setTitlePageFont(doc, 'TitleExtraBold', 'Helvetica-Bold', titleSize);
+    }
+
+    doc.text(upperTitle, 50, titleY, textOptions);
+
+    // The subtitle follows wherever the title ended, however many lines it took
+    if (subtitle) {
+      this.setTitlePageFont(doc, 'BodyRegular', 'Helvetica', 10);
+      doc.text(subtitle, 50, doc.y + subtitleGap, textOptions);
+    }
+
+    const byY = Math.max(bylineY, doc.y + bylineGap);
+
+    this.setTitlePageFont(doc, 'BodyRegular', 'Helvetica', 10);
+    doc.text('By', 50, byY, textOptions);
+
+    this.setTitlePageFont(doc, 'TitleBold', 'Helvetica-Bold', 16);
+    doc.text(author.toUpperCase(), 50, byY + 30, textOptions);
+  }
+
+  private setTitlePageFont(
+    doc: PDFKit.PDFDocument,
+    font: string,
+    fallback: string,
+    size: number,
+  ): void {
     try {
-      doc.fontSize(10).font('BodyRegular');
+      doc.fontSize(size).font(font);
     } catch (error) {
-      doc.fontSize(10).font('Helvetica');
+      doc.fontSize(size).font(fallback);
     }
-
-    doc.text('By', 50, 480, {
-      width: pageWidth - 100,
-      align: 'center',
-    });
-
-    try {
-      doc.fontSize(16).font('TitleBold');
-    } catch (error) {
-      doc.fontSize(16).font('Helvetica-Bold');
-    }
-
-    doc.text(author.toUpperCase(), 50, 510, {
-      width: pageWidth - 100,
-      align: 'center',
-    });
   }
 
   private addAboutPage(
